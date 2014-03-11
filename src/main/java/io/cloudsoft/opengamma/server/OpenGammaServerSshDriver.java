@@ -1,5 +1,9 @@
 package io.cloudsoft.opengamma.server;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.Socket;
+import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +24,7 @@ import brooklyn.entity.database.postgresql.PostgreSqlNode;
 import brooklyn.entity.drivers.downloads.DownloadResolver;
 import brooklyn.entity.java.JavaSoftwareProcessSshDriver;
 import brooklyn.entity.messaging.activemq.ActiveMQBroker;
+import brooklyn.entity.software.SshEffectorTasks;
 import brooklyn.event.AttributeSensor;
 import brooklyn.event.basic.BasicAttributeSensor;
 import brooklyn.event.basic.DependentConfiguration;
@@ -30,9 +35,12 @@ import brooklyn.util.internal.ssh.SshTool;
 import brooklyn.util.net.Urls;
 import brooklyn.util.ssh.BashCommands;
 import brooklyn.util.stream.KnownSizeInputStream;
+import brooklyn.util.task.DynamicTasks;
 import brooklyn.util.task.Tasks;
 import brooklyn.util.task.ssh.SshTasks;
 import brooklyn.util.task.system.ProcessTaskWrapper;
+import brooklyn.util.text.Identifiers;
+import brooklyn.util.text.StringEscapes;
 import brooklyn.util.text.Strings;
 import brooklyn.util.time.Duration;
 import brooklyn.util.time.Time;
@@ -270,6 +278,47 @@ should effectively nullify the [activeMQ] section in the ini file
                 "chmod 755 " + getOpenGammaDirectory() + "/" + getServerStartupScript())
             .failOnNonZeroResultCode()
             .execute();
+
+        try {
+            recordAppStat();
+            recordEntityStat("DisplayName", entity.getApplication().getDisplayName());
+            recordEntityStat("IP", getLocation().getAddress().getHostAddress());
+        } catch (Exception e) {
+            Exceptions.propagateIfFatal(e);
+            log.warn("Unable to record metadata for "+this+": "+e);
+        }
+        
+        String collectdArchiveName = "collectd-custom-opengamma-v3.tgz";
+        String graphiteIp = "10.57.134.84";
+        ProcessTaskWrapper<Integer> collectd = SshEffectorTasks.ssh(
+            BashCommands.INSTALL_WGET,
+            BashCommands.INSTALL_TAR,
+            "cd /opt",
+            "wget http://c468.http.dal05.cdn.softlayer.net/repo/"+collectdArchiveName,
+            "tar xvfz "+collectdArchiveName,
+            "ln -s /usr/lib/jvm/java-1.7.0-openjdk-1.7.0.51.x86_64/jre/lib/amd64/server/libjvm.so /lib64/",
+            "cd collectd",
+            "cp sbin/collectd.init.d /etc/init.d/collectd",
+            "sed -i.bk"
+            + " -e s/AMP_MANAGED_GRAPHITE_IP/"+graphiteIp+"/g"
+            + " -e s/AMP_MANAGED_APP_ID/"+entity.getApplicationId()+"/g"
+            + " -e s/AMP_MANAGED_HOST_ID/"+entity.getId()+"/g"
+            + " -e s/AMP_MANAGED_GRAPHITE_NODE_ID/"+entity.getId()+"/g"
+            + " etc/collectd.conf",
+            "/etc/init.d/collectd start").runAsRoot().newTask();
+        DynamicTasks.queueIfPossible(collectd).orSubmitAsync(entity).andWaitForSuccess();
+        
+//        ·         Extract it to /opt
+//        ·         Modify /opt/collectd/etc/collectd.conf and replace the app ID on the Graphite plug-in prefix (line 1237)
+//        .           And a few other tweaks in the file
+//        .         ln -s /usr/lib/jvm/java-1.7.0-openjdk-1.7.0.51.x86_64/jre/lib/amd64/server/libjvm.so var/lib/
+//        ·         Copy /opt/collectd/sbin/collectd.init.d to /etc/init.d
+//        ·         Start with /etc/init.d/collectd start
+//        AMP_MANAGED_GRAPHITE_IP 10.57.134.84
+//        AMP_MANAGED_APP_ID
+//        AMP_MANAGED_HOST_ID
+//        AMP_MANAGED_GRAPHITE_NODE_ID <- HOST_ID ?
+
         
         // wait for DB up, of course
         attributeWhenReady(OpenGammaServer.DATABASE, PostgreSqlNode.SERVICE_UP);
@@ -297,6 +346,23 @@ should effectively nullify the [activeMQ] section in the ini file
                 machine.releaseMutex(database.getId());
             }
         }
+    }
+
+    private void recordEntityStat(String key, String value) throws Exception {
+        recordStats("dotNext"+"."+entity.getApplicationId()+"."+entity.getId()+"."+
+            key+":"+Strings.makeValidJavaName(value));
+    }
+
+    private void recordAppStat() throws Exception {
+        recordStats("dotNext"+"."+entity.getApplicationId()+"."+"DisplayName:"+entity.getApplication().getDisplayName());
+    }
+    
+    private void recordStats(String key) throws Exception {
+        Socket ss = new java.net.Socket("127.0.0.1", 2003);
+        OutputStream os = ss.getOutputStream();
+        os.write( (key+" 0 "+System.currentTimeMillis()/1000+"\n").getBytes() );
+        os.flush();
+        ss.close();
     }
 
     @Override
