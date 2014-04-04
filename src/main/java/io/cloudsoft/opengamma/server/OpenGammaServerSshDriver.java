@@ -29,6 +29,7 @@ import brooklyn.event.AttributeSensor;
 import brooklyn.event.basic.BasicAttributeSensor;
 import brooklyn.event.basic.DependentConfiguration;
 import brooklyn.location.basic.SshMachineLocation;
+import brooklyn.util.ResourceUtils;
 import brooklyn.util.collections.MutableMap;
 import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.internal.ssh.SshTool;
@@ -256,8 +257,8 @@ should effectively nullify the [activeMQ] section in the ini file
 
         // needed for 2.1.0 due as workaround for https://github.com/OpenGamma/OG-Platform/pull/6
         // (remove once that is fixed in OG)
-        copyResource("classpath:/io/cloudsoft/opengamma/config/patches/patch-postgres-rsk-v-51.jar",
-                getLibOverrideDirectory() + "/patch-postgres-rsk-v-51.jar");
+        DynamicTasks.queue( SshEffectorTasks.put( getLibOverrideDirectory() + "/patch-postgres-rsk-v-51.jar" )
+            .contents(ResourceUtils.create(this).getResourceFromUrl( "classpath:/io/cloudsoft/opengamma/config/patches/patch-postgres-rsk-v-51.jar" )) );
         // patch does not work due to local classloading -- we need to rebuild the jar
         newScript("patching postgres rsk and making start script executable")
             .updateTaskAndFailOnNonZeroResultCode()
@@ -281,7 +282,7 @@ should effectively nullify the [activeMQ] section in the ini file
 
         try {
             recordAppStat();
-            recordEntityStat("DisplayName", entity.getApplication().getDisplayName());
+            recordEntityStat("DisplayName", entity.getDisplayName());
             recordEntityStat("IP", getLocation().getAddress().getHostAddress());
         } catch (Exception e) {
             Exceptions.propagateIfFatal(e);
