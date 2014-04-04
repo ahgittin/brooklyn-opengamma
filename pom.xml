@@ -16,8 +16,8 @@
         <excludedTestGroups>Integration,Live,WIP</excludedTestGroups>
 
         <testng.version>6.8</testng.version>
-        <brooklyn.version>0.7.0-SNAPSHOT</brooklyn.version>
-        <networking.version>0.2.0-SNAPSHOT</networking.version>
+        <brooklyn.version>0.7.0-M1</brooklyn.version>
+        <networking.version>0.2.0-M1</networking.version>
     </properties>
 
     <dependencies>
